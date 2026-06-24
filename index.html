@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Student Attendance App</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; background: #f0f4f8; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .container { background: white; padding: 24px; border-radius: 12px; width: 95%; max-width: 480px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 20px auto; }
+    h1 { text-align: center; color: #1a73e8; margin-bottom: 20px; font-size: 22px; }
+    h2 { color: #333; margin-bottom: 16px; font-size: 18px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .tabs button { flex: 1; padding: 10px; border: none; border-radius: 8px; background: #e8f0fe; color: #1a73e8; font-weight: bold; cursor: pointer; font-size: 13px; }
+    .tabs button:hover, .tabs button.active { background: #1a73e8; color: white; }
+    input { width: 100%; padding: 12px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; display: block; }
+    input:focus { border-color: #1a73e8; }
+    .btn { width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 4px; }
+    .btn:hover { background: #1558b0; }
+    .btn-red { background: red; margin-top: 16px; }
+    p { margin-top: 10px; font-size: 13px; text-align: center; }
+    .success { color: green; }
+    .error { color: red; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px; }
+    th { background: #1a73e8; color: white; padding: 8px; text-align: left; }
+    td { padding: 8px; border-bottom: 1px solid #eee; }
+    tr:hover { background: #f9f9f9; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>📋 Student Attendance</h1>
+
+  <div class="tabs">
+    <button onclick="showTab('register')" id="tab-register">Register</button>
+    <button onclick="showTab('attendance')" id="tab-attendance">Mark Attendance</button>
+    <button onclick="showTab('admin')" id="tab-admin">Admin</button>
+  </div>
+
+  <!-- Register Tab -->
+  <div id="register" class="tab-content">
+    <h2>Student Registration</h2>
+    <input type="text" id="reg-name" placeholder="Full Name">
+    <input type="text" id="reg-number" placeholder="Registration Number">
+    <input type="password" id="reg-pin" placeholder="Create PIN (4 digits)">
+    <button class="btn" onclick="registerStudent()">Register</button>
+    <p id="reg-msg"></p>
+  </div>
+
+  <!-- Attendance Tab -->
+  <div id="attendance" class="tab-content" style="display:none">
+    <h2>Mark Attendance</h2>
+    <input type="text" id="att-number" placeholder="Registration Number">
+    <input type="password" id="att-pin" placeholder="Your PIN">
+    <button class="btn" onclick="markAttendance()">Mark Present</button>
+    <p id="att-msg"></p>
+  </div>
+
+  <!-- Admin Tab -->
+  <div id="admin" class="tab-content" style="display:none">
+    <h2>Admin Panel</h2>
+    <input type="password" id="admin-pass" placeholder="Admin Password">
+    <button class="btn" onclick="viewAdmin()">Login</button>
+    <div id="admin-records"></div>
+  </div>
+</div>
+
+<script>
+const ADMIN_PASSWORD = "admin1234";
+
+function showTab(tabName) {
+  document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById(tabName).style.display = 'block';
+  document.getElementById('tab-' + tabName).classList.add('active');
+}
+
+function getStudents() {
+  return JSON.parse(localStorage.getItem('students')) || {};
+}
+function saveStudents(s) {
+  localStorage.setItem('students', JSON.stringify(s));
+}
+function getAttendance() {
+  return JSON.parse(localStorage.getItem('attendance')) || [];
+}
+function saveAttendance(a) {
+  localStorage.setItem('attendance', JSON.stringify(a));
+}
+
+function registerStudent() {
+  const name = document.getElementById('reg-name').value.trim();
+  const regNum = document.getElementById('reg-number').value.trim().toUpperCase();
+  const pin = document.getElementById('reg-pin').value.trim();
+  const msg = document.getElementById('reg-msg');
+
+  if (!name || !regNum || !pin) {
+    msg.className = 'error';
+    msg.textContent = 'Please fill in all fields.';
+    return;
+  }
+  if (pin.length !== 4 || isNaN(pin)) {
+    msg.className = 'error';
+    msg.textContent = 'PIN must be exactly 4 digits.';
+    return;
+  }
+
+  const students = getStudents();
+  if (students[regNum]) {
+    msg.className = 'error';
+    msg.textContent = 'Registration number already exists.';
+    return;
+  }
+
+  students[regNum] = { name, pin };
+  saveStudents(students);
+
+  msg.className = 'success';
+  msg.textContent = '✅ ' + name + ' registered successfully!';
+
+  document.getElementById('reg-name').value = '';
+  document.getElementById('reg-number').value = '';
+  document.getElementById('reg-pin').value = '';
+}
+
+function markAttendance() {
+  const regNum = document.getElementById('att-number').value.trim().toUpperCase();
+  const pin = document.getElementById('att-pin').value.trim();
+  const msg = document.getElementById('att-msg');
+
+  if (!regNum || !pin) {
+    msg.className = 'error';
+    msg.textContent = 'Please enter your reg number and PIN.';
+    return;
+  }
+
+  const students = getStudents();
+  if (!students[regNum]) {
+    msg.className = 'error';
+    msg.textContent = 'Student not found. Please register first.';
+    return;
+  }
+  if (students[regNum].pin !== pin) {
+    msg.className = 'error';
+    msg.textContent = 'Incorrect PIN.';
+    return;
+  }
+
+  const attendance = getAttendance();
+  const today = new Date().toLocaleDateString();
+  const alreadyMarked = attendance.find(a => a.regNum === regNum && a.date === today);
+
+  if (alreadyMarked) {
+    msg.className = 'error';
+    msg.textContent = '⚠️ Attendance already marked today.';
+    return;
+  }
+
+  const now = new Date();
+  attendance.push({
+    name: students[regNum].name,
+    regNum,
+    date: today,
+    time: now.toLocaleTimeString()
+  });
+  saveAttendance(attendance);
+
+  msg.className = 'success';
+  msg.textContent = '✅ Attendance marked for ' + students[regNum].name + '!';
+
+  document.getElementById('att-number').value = '';
+  document.getElementById('att-pin').value = '';
+}
+
+function viewAdmin() {
+  const pass = document.getElementById('admin-pass').value.trim();
+  const recordsDiv = document.getElementById('admin-records');
+
+  if (pass !== ADMIN_PASSWORD) {
+    recordsDiv.innerHTML = '<p class="error">❌ Incorrect password.</p>';
+    return;
+  }
+
+  const attendance = getAttendance();
+  if (attendance.length === 0) {
+    recordsDiv.innerHTML = '<p class="error">No attendance records yet.</p>';
+    return;
+  }
+
+  let html = '<table><tr><th>#</th><th>Name</th><th>Reg No</th><th>Date</th><th>Time</th></tr>';
+  attendance.forEach((r, i) => {
+    html += `<tr><td>${i+1}</td><td>${r.name}</td><td>${r.regNum}</td><td>${r.date}</td><td>${r.time}</td></tr>`;
+  });
+  html += '</table>';
+  html += '<button class="btn btn-red" onclick="clearAttendance()">🗑️ Clear All Records</button>';
+  recordsDiv.innerHTML = html;
+}
+
+function clearAttendance() {
+  if (confirm('Clear all attendance records?')) {
+    localStorage.removeItem('attendance');
+    document.getElementById('admin-records').innerHTML = '<p class="success">✅ Records cleared.</p>';
+  }
+}
+</script>
+</body>
+</html>
