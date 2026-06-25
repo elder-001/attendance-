@@ -313,19 +313,24 @@
         <option value="5">5 minutes</option>
         <option value="10" selected>10 minutes</option>
 <script>
-// ── Storage ──────────────────────────────────────────────
-function getStudents()    { return JSON.parse(localStorage.getItem('students'))    || {}; }
-function saveStudents(s)  { localStorage.setItem('students',    JSON.stringify(s)); }
-function getAttendance()  { return JSON.parse(localStorage.getItem('attendance'))  || []; }
-function saveAttendance(a){ localStorage.setItem('attendance',  JSON.stringify(a)); }
-function getCourses()     { return JSON.parse(localStorage.getItem('courses'))     || ['COS 202','EDU 202','MTH 202','IFT 212','GST 212']; }
-function saveCourses(c)   { localStorage.setItem('courses',     JSON.stringify(c)); }
-function getAdminPass()   { return localStorage.getItem('adminPass') || '2000'; }
-function saveAdminPass(p) { localStorage.setItem('adminPass', p); }
-function getSession()     { return JSON.parse(localStorage.getItem('session'))     || null; }
-function saveSession(s)   { localStorage.setItem('session',    JSON.stringify(s)); }
-function clearSession()   { localStorage.removeItem('session'); }
-function getAutoLogout()  { return parseInt(localStorage.getItem('autoLogout'))    || 10; }
+const API = 'https://script.google.com/macros/s/AKfycbzGd9ul3f3wMPkt78pUQu9RAI3I4FSx1k7KiYJXlwzll88rA2Pu_XeRYcHCpokAhu_n/exec';
+
+// ── API helper ────────────────────────────────────────────
+async function api(params) {
+  const url = API + '?' + new URLSearchParams(params).toString();
+  const res  = await fetch(url);
+  return res.json();
+}
+
+// ── LocalStorage fallback for session/settings ────────────
+function getSession()    { return JSON.parse(localStorage.getItem('session'))  || null; }
+function saveSession(s)  { localStorage.setItem('session', JSON.stringify(s)); }
+function clearSession()  { localStorage.removeItem('session'); }
+function getCourses()    { return JSON.parse(localStorage.getItem('courses'))  || ['COS 202','EDU 202','MTH 202','IFT 212','GST 212']; }
+function saveCourses(c)  { localStorage.setItem('courses',  JSON.stringify(c)); }
+function getAdminPass()  { return localStorage.getItem('adminPass') || '2000'; }
+function saveAdminPass(p){ localStorage.setItem('adminPass', p); }
+function getAutoLogout() { return parseInt(localStorage.getItem('autoLogout')) || 10; }
 
 // ── State ─────────────────────────────────────────────────
 let sessionTimerInterval = null;
@@ -335,6 +340,8 @@ let adminLoggedIn        = false;
 let settingsLoggedIn     = false;
 let deleteTargetReg      = null;
 let pinLockout           = {};
+let cachedStudents       = {};
+let cachedAttendance     = [];
 
 // ── Toast ─────────────────────────────────────────────────
 function showToast(msg) {
@@ -350,6 +357,14 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 
 // ── Message helper ────────────────────────────────────────
 function showMsg(el, text, type) { el.className = 'msg ' + type; el.textContent = text; }
+
+// ── Loading ───────────────────────────────────────────────
+function setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.style.opacity = loading ? '0.6' : '1';
+}
 
 // ── Page Navigation ───────────────────────────────────────
 function showPage(page) {
@@ -376,42 +391,50 @@ function loadCoursesIntoSelect(id, withAll) {
 }
 
 // ── Register Student ──────────────────────────────────────
-function registerStudent() {
+async function registerStudent() {
   const name   = document.getElementById('reg-name').value.trim();
   const regNum = document.getElementById('reg-number').value.trim().toUpperCase();
   const pin    = document.getElementById('reg-pin').value.trim();
   const msg    = document.getElementById('reg-msg');
   if (!name || !regNum || !pin) { showMsg(msg,'Please fill in all fields.','error'); return; }
   if (pin.length !== 4 || isNaN(pin)) { showMsg(msg,'PIN must be exactly 4 digits.','error'); return; }
-  const students = getStudents();
-  if (students[regNum]) { showMsg(msg,'Registration number already exists.','error'); return; }
-  students[regNum] = { name, pin };
-  saveStudents(students);
-  showMsg(msg,'✅ ' + name + ' registered successfully!','success');
-  showToast('✅ Registration successful!');
-  document.getElementById('reg-name').value = '';
-  document.getElementById('reg-number').value = '';
-  document.getElementById('reg-pin').value = '';
+  showMsg(msg,'⏳ Registering...','warning');
+  try {
+    const res = await api({ action:'registerStudent', regNum, name, pin });
+    if (res.success) {
+      showMsg(msg,'✅ ' + name + ' registered!','success');
+      showToast('✅ Registration successful!');
+      document.getElementById('reg-name').value = '';
+      document.getElementById('reg-number').value = '';
+      document.getElementById('reg-pin').value = '';
+    } else {
+      showMsg(msg, res.msg || 'Error.', 'error');
+    }
+  } catch(e) { showMsg(msg,'❌ Network error. Check internet.','error'); }
 }
 
 // ── Change PIN (Student) ──────────────────────────────────
-function changePinStudent() {
+async function changePinStudent() {
   const regNum  = document.getElementById('pin-reg').value.trim().toUpperCase();
   const oldPin  = document.getElementById('pin-old').value.trim();
   const newPin  = document.getElementById('pin-new').value.trim();
   const confirm = document.getElementById('pin-confirm').value.trim();
   const msg     = document.getElementById('pin-modal-msg');
-  if (!regNum || !oldPin || !newPin || !confirm) { showMsg(msg,'Please fill in all fields.','error'); return; }
-  const students = getStudents();
-  if (!students[regNum]) { showMsg(msg,'Student not found.','error'); return; }
-  if (students[regNum].pin !== oldPin) { showMsg(msg,'Current PIN is incorrect.','error'); return; }
+  if (!regNum || !oldPin || !newPin || !confirm) { showMsg(msg,'Fill all fields.','error'); return; }
   if (newPin.length !== 4 || isNaN(newPin)) { showMsg(msg,'New PIN must be 4 digits.','error'); return; }
   if (newPin !== confirm) { showMsg(msg,'PINs do not match.','error'); return; }
-  students[regNum].pin = newPin;
-  saveStudents(students);
-  showMsg(msg,'✅ PIN updated!','success');
-  showToast('✅ PIN changed!');
-  setTimeout(() => closeModal('pin-modal'), 1500);
+  showMsg(msg,'⏳ Verifying...','warning');
+  try {
+    const students = await api({ action:'getStudents' });
+    if (!students.students[regNum]) { showMsg(msg,'Student not found.','error'); return; }
+    if (students.students[regNum].pin !== oldPin) { showMsg(msg,'Current PIN is incorrect.','error'); return; }
+    const res = await api({ action:'updatePin', regNum, newPin });
+    if (res.success) {
+      showMsg(msg,'✅ PIN updated!','success');
+      showToast('✅ PIN changed!');
+      setTimeout(() => closeModal('pin-modal'), 1500);
+    } else { showMsg(msg, res.msg,'error'); }
+  } catch(e) { showMsg(msg,'❌ Network error.','error'); }
 }
 
 // ── Session Control ───────────────────────────────────────
@@ -450,7 +473,7 @@ function closeSession() {
 
 function startAdminCountdown(expires) {
   clearInterval(countdownInterval);
-  countdownInterval = setInterval(() => {
+  countdownInterval = setInterval(async () => {
     const left = expires - Date.now();
     if (left <= 0) { closeSession(); return; }
     const m = Math.floor(left / 60000);
@@ -459,11 +482,14 @@ function startAdminCountdown(expires) {
     if (el) el.textContent = m + ':' + String(s).padStart(2,'0');
     const session = getSession();
     if (session) {
-      const count = getAttendance().filter(a => a.sessionCode === session.code).length;
-      const lc = document.getElementById('live-count');
-      if (lc) lc.textContent = count;
+      try {
+        const res = await api({ action:'getAttendance' });
+        const count = res.attendance.filter(a => a.sessionCode === session.code).length;
+        const lc = document.getElementById('live-count');
+        if (lc) lc.textContent = count;
+      } catch(e) {}
     }
-  }, 1000);
+  }, 5000);
 }
 
 function checkSessionOnHome() {
@@ -496,14 +522,14 @@ function startHomeCountdown(expires) {
 }
 
 // ── Mark Attendance ───────────────────────────────────────
-function markAttendance() {
+async function markAttendance() {
   const course = document.getElementById('att-course').value.trim();
   const regNum = document.getElementById('att-number').value.trim().toUpperCase();
   const pin    = document.getElementById('att-pin').value.trim();
   const code   = document.getElementById('att-code').value.trim().toUpperCase();
   const msg    = document.getElementById('att-msg');
   if (!course) { showMsg(msg,'Please select a course.','error'); return; }
-  if (!regNum || !pin) { showMsg(msg,'Enter your reg number and PIN.','error'); return; }
+  if (!regNum || !pin) { showMsg(msg,'Enter reg number and PIN.','error'); return; }
   if (!code) { showMsg(msg,'Enter the session code.','error'); return; }
   const lockKey = regNum;
   if (pinLockout[lockKey] && pinLockout[lockKey].count >= 3) {
@@ -511,59 +537,60 @@ function markAttendance() {
     if (wait > 0) { showMsg(msg,'Too many wrong PINs. Wait ' + wait + 's.','error'); return; }
     else delete pinLockout[lockKey];
   }
-  const students = getStudents();
-  if (!students[regNum]) { showMsg(msg,'Student not found. Register first.','error'); return; }
-  if (students[regNum].pin !== pin) {
-    if (!pinLockout[lockKey]) pinLockout[lockKey] = { count: 0 };
-    pinLockout[lockKey].count++;
-    if (pinLockout[lockKey].count >= 3) {
-      pinLockout[lockKey].until = Date.now() + 60000;
-      showMsg(msg,'❌ Too many wrong PINs. Locked 60s.','error'); return;
-    }
-    showMsg(msg,'❌ Wrong PIN. ' + (3 - pinLockout[lockKey].count) + ' attempt(s) left.','error'); return;
-  }
-  delete pinLockout[lockKey];
   const session = getSession();
-  if (!session || Date.now() >= session.expires) { showMsg(msg,'❌ No active session. Attendance is closed.','error'); return; }
+  if (!session || Date.now() >= session.expires) { showMsg(msg,'❌ No active session.','error'); return; }
   if (session.code !== code) { showMsg(msg,'❌ Wrong session code.','error'); return; }
-  if (session.course !== course) { showMsg(msg,'❌ This code is for ' + session.course + '.','error'); return; }
-  const attendance = getAttendance();
-  if (attendance.find(a => a.regNum === regNum && a.sessionCode === session.code)) {
-    showMsg(msg,'⚠️ Already marked for this session.','error'); return;
-  }
-  const elapsed = (Date.now() - (session.expires - session.duration * 60000)) / 60000;
-  const isLate  = elapsed > 5;
-  attendance.push({
-    name: students[regNum].name, regNum, course,
-    date: new Date().toLocaleDateString(),
-    time: new Date().toLocaleTimeString(),
-    sessionCode: session.code,
-    status: isLate ? 'Late' : 'Present'
-  });
-  saveAttendance(attendance);
-  const statusText = isLate ? '⏰ Marked LATE' : '✅ Marked PRESENT';
-  showMsg(msg, statusText + ' — ' + students[regNum].name + '!', isLate ? 'warning' : 'success');
-  showToast(statusText + '!');
-  document.getElementById('att-number').value = '';
-  document.getElementById('att-pin').value = '';
-  document.getElementById('att-code').value = '';
+  if (session.course !== course) { showMsg(msg,'❌ Code is for ' + session.course + '.','error'); return; }
+  showMsg(msg,'⏳ Verifying...','warning');
+  try {
+    const sRes = await api({ action:'getStudents' });
+    const students = sRes.students;
+    if (!students[regNum]) { showMsg(msg,'Student not found. Register first.','error'); return; }
+    if (students[regNum].pin !== pin) {
+      if (!pinLockout[lockKey]) pinLockout[lockKey] = { count: 0 };
+      pinLockout[lockKey].count++;
+      if (pinLockout[lockKey].count >= 3) {
+        pinLockout[lockKey].until = Date.now() + 60000;
+        showMsg(msg,'❌ Too many wrong PINs. Locked 60s.','error'); return;
+      }
+      showMsg(msg,'❌ Wrong PIN. ' + (3 - pinLockout[lockKey].count) + ' attempt(s) left.','error'); return;
+    }
+    delete pinLockout[lockKey];
+    const elapsed = (Date.now() - (session.expires - session.duration * 60000)) / 60000;
+    const isLate  = elapsed > 5;
+    const res = await api({
+      action: 'markAttendance',
+      name: students[regNum].name,
+      regNum, course,
+      date: new Date().toLocaleDateString(),
+      time: new Date().toLocaleTimeString(),
+      sessionCode: session.code,
+      status: isLate ? 'Late' : 'Present'
+    });
+    if (res.success) {
+      const statusText = isLate ? '⏰ Marked LATE' : '✅ Marked PRESENT';
+      showMsg(msg, statusText + ' — ' + students[regNum].name + '!', isLate ? 'warning' : 'success');
+      showToast(statusText + '!');
+      document.getElementById('att-number').value = '';
+      document.getElementById('att-pin').value = '';
+      document.getElementById('att-code').value = '';
+    } else { showMsg(msg, res.msg || 'Error.','error'); }
+  } catch(e) { showMsg(msg,'❌ Network error. Check internet.','error'); }
 }
+
 // ── Admin Unlock ──────────────────────────────────────────
-function unlockAdmin() {
+async function unlockAdmin() {
   const pass = document.getElementById('admin-pass').value.trim();
   const msg  = document.getElementById('admin-login-msg');
   if (pass !== getAdminPass()) { showMsg(msg,'❌ Incorrect password.','error'); return; }
   adminLoggedIn = true;
+  showMsg(msg,'⏳ Loading dashboard...','warning');
   document.getElementById('admin-lock').style.display      = 'none';
   document.getElementById('admin-dashboard').style.display = 'block';
   loadCoursesIntoSelect('session-course', false);
   loadCoursesIntoSelect('filter-course', true);
   loadCoursesIntoSelect('pct-course', true);
-  populateDateFilter();
-  renderRecords();
-  renderPercentage();
-  renderStudentList();
-  renderStats();
+  await loadAdminData();
   const session = getSession();
   if (session && Date.now() < session.expires) {
     document.getElementById('admin-session-closed').style.display = 'none';
@@ -573,6 +600,22 @@ function unlockAdmin() {
     startAdminCountdown(session.expires);
   }
   startAutoLogoutTimer();
+}
+
+async function loadAdminData() {
+  try {
+    const [sRes, aRes] = await Promise.all([
+      api({ action:'getStudents' }),
+      api({ action:'getAttendance' })
+    ]);
+    cachedStudents   = sRes.students || {};
+    cachedAttendance = aRes.attendance || [];
+    populateDateFilter();
+    renderRecords();
+    renderPercentage();
+    renderStudentList();
+    renderStats();
+  } catch(e) { showToast('❌ Failed to load data. Check internet.'); }
 }
 
 function logoutAdmin() {
@@ -590,10 +633,9 @@ function logoutAdmin() {
 function startAutoLogoutTimer() {
   clearTimeout(autoLogoutTimer);
   autoLogoutTimer = setTimeout(() => {
-    if (adminLoggedIn) { logoutAdmin(); showToast('⏰ Auto-logged out due to inactivity.'); }
+    if (adminLoggedIn) { logoutAdmin(); showToast('⏰ Auto-logged out.'); }
   }, getAutoLogout() * 60 * 1000);
 }
-
 function resetAutoLogout() { if (adminLoggedIn) startAutoLogoutTimer(); }
 document.addEventListener('click', resetAutoLogout);
 document.addEventListener('keypress', resetAutoLogout);
@@ -601,32 +643,33 @@ document.addEventListener('keypress', resetAutoLogout);
 function saveAutoLogout() {
   const val = document.getElementById('auto-logout-time').value;
   localStorage.setItem('autoLogout', val);
-  showMsg(document.getElementById('logout-setting-msg'), '✅ Saved! Auto logout: ' + val + ' mins.', 'success');
+  showMsg(document.getElementById('logout-setting-msg'), '✅ Saved! ' + val + ' mins.', 'success');
 }
 
 // ── Stats ─────────────────────────────────────────────────
 function renderStats() {
-  const a = getAttendance();
+  const a = cachedAttendance;
   const sessions = [...new Set(a.map(x => x.sessionCode).filter(Boolean))];
   document.getElementById('stat-total').textContent    = a.length;
-  document.getElementById('stat-students').textContent = new Set(a.map(x => x.regNum)).size;
+  document.getElementById('stat-students').textContent = Object.keys(cachedStudents).length;
   document.getElementById('stat-courses').textContent  = new Set(a.map(x => x.course)).size;
   document.getElementById('stat-sessions').textContent = sessions.length;
 }
 
 // ── Date Filter ───────────────────────────────────────────
 function populateDateFilter() {
-  const dates = [...new Set(getAttendance().map(a => a.date))].sort();
+  const dates = [...new Set(cachedAttendance.map(a => a.date))].sort();
   const sel = document.getElementById('filter-date');
+  if (!sel) return;
   sel.innerHTML = '<option value="">All Dates</option>';
   dates.forEach(d => { const o = document.createElement('option'); o.value = d; o.textContent = d; sel.appendChild(o); });
 }
 
 // ── Render Records ────────────────────────────────────────
 function renderRecords() {
-  const fc = document.getElementById('filter-course').value;
-  const fd = document.getElementById('filter-date').value;
-  let a = getAttendance();
+  const fc = document.getElementById('filter-course') ? document.getElementById('filter-course').value : '';
+  const fd = document.getElementById('filter-date')   ? document.getElementById('filter-date').value   : '';
+  let a = cachedAttendance;
   if (fc) a = a.filter(x => x.course === fc);
   if (fd) a = a.filter(x => x.date   === fd);
   const td = document.getElementById('records-table');
@@ -644,8 +687,8 @@ function renderRecords() {
 
 // ── Attendance % ──────────────────────────────────────────
 function renderPercentage() {
-  const fc = document.getElementById('pct-course').value;
-  let a = getAttendance();
+  const fc = document.getElementById('pct-course') ? document.getElementById('pct-course').value : '';
+  let a = cachedAttendance;
   if (fc) a = a.filter(x => x.course === fc);
   const div = document.getElementById('pct-table');
   if (!a.length) { div.innerHTML = '<p class="msg error" style="padding:12px 0">No records found.</p>'; return; }
@@ -666,17 +709,14 @@ function renderPercentage() {
   let i = 0;
   Object.entries(map).forEach(([reg, d]) => {
     Object.keys(d.courses).forEach(course => {
-      const total    = sessionsByCourse[course] ? sessionsByCourse[course].size : 1;
-      const attended = d.courses[course];
-      const pct      = Math.round((attended / total) * 100);
-      const barClass = pct >= 75 ? 'progress-green' : pct >= 50 ? 'progress-orange' : 'progress-red';
-      const badgeClass = pct >= 75 ? 'badge-green' : pct >= 50 ? 'badge-orange' : 'badge-red';
-      html += `<tr>
-        <td>${++i}</td><td>${d.name}</td><td>${reg}</td>
-        <td>${attended}/${total}</td>
+      const total      = sessionsByCourse[course] ? sessionsByCourse[course].size : 1;
+      const attended   = d.courses[course];
+      const pct        = Math.round((attended / total) * 100);
+      const barClass   = pct >= 75 ? 'progress-green' : pct >= 50 ? 'progress-orange' : 'progress-red';
+      const badgeClass = pct >= 75 ? 'badge-green'    : pct >= 50 ? 'badge-orange'    : 'badge-red';
+      html += `<tr><td>${++i}</td><td>${d.name}</td><td>${reg}</td><td>${attended}/${total}</td>
         <td><span class="${badgeClass}">${pct}%</span>
-        <div class="progress-wrap"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div></td>
-      </tr>`;
+        <div class="progress-wrap"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div></td></tr>`;
     });
   });
   html += '</table>';
@@ -685,14 +725,13 @@ function renderPercentage() {
 
 // ── Student List ──────────────────────────────────────────
 function renderStudentList() {
-  const students = getStudents();
-  const div = document.getElementById('student-list');
-  const keys = Object.keys(students);
+  const div  = document.getElementById('student-list');
+  const keys = Object.keys(cachedStudents);
   if (!keys.length) { div.innerHTML = '<p class="msg error">No students registered yet.</p>'; return; }
   div.innerHTML = keys.map(reg => `
     <div class="student-row">
       <div class="student-info">
-        <div class="s-name">${students[reg].name}</div>
+        <div class="s-name">${cachedStudents[reg].name}</div>
         <div class="s-reg">${reg}</div>
       </div>
       <div>
@@ -701,37 +740,31 @@ function renderStudentList() {
     </div>`).join('');
 }
 
-function promptDeleteStudent(reg) {
+async function promptDeleteStudent(reg) {
   deleteTargetReg = reg;
-  const students = getStudents();
-  document.getElementById('delete-student-name').textContent = students[reg].name + ' (' + reg + ')';
+  document.getElementById('delete-student-name').textContent = cachedStudents[reg].name + ' (' + reg + ')';
   openModal('delete-modal');
 }
 
-function confirmDeleteStudent() {
+async function confirmDeleteStudent() {
   if (!deleteTargetReg) return;
-  const students = getStudents();
-  delete students[deleteTargetReg];
-  saveStudents(students);
-  saveAttendance(getAttendance().filter(a => a.regNum !== deleteTargetReg));
-  deleteTargetReg = null;
-  closeModal('delete-modal');
-  renderStudentList();
-  renderStats();
-  renderRecords();
-  renderPercentage();
-  showToast('🗑️ Student deleted.');
+  try {
+    await api({ action:'deleteStudent', regNum: deleteTargetReg });
+    deleteTargetReg = null;
+    closeModal('delete-modal');
+    await loadAdminData();
+    showToast('🗑️ Student deleted.');
+  } catch(e) { showToast('❌ Error deleting student.'); }
 }
 
 // ── Clear Attendance ──────────────────────────────────────
-function clearAttendance() {
+async function clearAttendance() {
   if (confirm('Clear ALL attendance records? This cannot be undone.')) {
-    localStorage.removeItem('attendance');
-    renderRecords();
-    renderPercentage();
-    renderStats();
-    populateDateFilter();
-    showToast('🗑️ All records cleared.');
+    try {
+      await api({ action:'clearAttendance' });
+      await loadAdminData();
+      showToast('🗑️ All records cleared.');
+    } catch(e) { showToast('❌ Error clearing records.'); }
   }
 }
 
@@ -739,15 +772,15 @@ function clearAttendance() {
 function exportPDF() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
-  const fc = document.getElementById('filter-course').value;
-  let a = getAttendance();
+  const fc  = document.getElementById('filter-course') ? document.getElementById('filter-course').value : '';
+  let a = cachedAttendance;
   if (fc) a = a.filter(x => x.course === fc);
   doc.setFillColor(0,63,92); doc.rect(0,0,210,30,'F');
   doc.setTextColor(255,255,255);
   doc.setFontSize(16); doc.setFont('helvetica','bold');
   doc.text('STUDENT ATTENDANCE REPORT', 14, 13);
   doc.setFontSize(9); doc.setFont('helvetica','normal');
-  doc.text('Adamawa State College of Education,Hong in Affiliation with Taraba State University— 200 Level CSC Department', 14, 20);
+  doc.text('Adamawa State College of Education, Hong — CSC Department', 14, 20);
   doc.text('Generated: ' + new Date().toLocaleString(), 14, 26);
   doc.setTextColor(0,0,0);
   let y = 38;
@@ -822,7 +855,7 @@ function renderCourseList() {
 function addCourse() {
   const input   = document.getElementById('new-course').value.trim().toUpperCase();
   const msg     = document.getElementById('course-msg');
-  if (!input) { showMsg(msg,'Please enter a course name.','error'); return; }
+  if (!input) { showMsg(msg,'Enter a course name.','error'); return; }
   const courses = getCourses();
   if (courses.includes(input)) { showMsg(msg,'Course already exists.','error'); return; }
   courses.push(input); saveCourses(courses);
